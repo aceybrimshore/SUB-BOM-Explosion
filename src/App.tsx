@@ -91,6 +91,14 @@ export default function App() {
     setDeletedRowKeys((prev) => (prev.includes(key) ? prev : [...prev, key]));
   };
 
+  const handleDeleteRowKeys = (keys: string[]) => {
+    setDeletedRowKeys((prev) => {
+      const set = new Set(prev);
+      keys.forEach((k) => set.add(k));
+      return Array.from(set);
+    });
+  };
+
   const handleResetCustomizations = () => {
     setQtyOverrides({});
     setDeletedRowKeys([]);
@@ -444,6 +452,7 @@ export default function App() {
             onUpdateQtyOverride={handleUpdateQtyOverride}
             deletedRowKeys={deletedRowKeys}
             onDeleteRowKey={handleDeleteRowKey}
+            onDeleteRowKeys={handleDeleteRowKeys}
             onResetCustomizations={handleResetCustomizations}
           />
         )}

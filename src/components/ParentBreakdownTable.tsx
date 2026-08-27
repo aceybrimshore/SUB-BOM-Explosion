@@ -30,6 +30,7 @@ interface ParentBreakdownTableProps {
   onUpdateQtyOverride?: (key: string, qty: number) => void;
   deletedRowKeys?: string[];
   onDeleteRowKey?: (key: string) => void;
+  onDeleteRowKeys?: (keys: string[]) => void;
   onResetCustomizations?: () => void;
 }
 
@@ -48,6 +49,7 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
   onUpdateQtyOverride,
   deletedRowKeys = [],
   onDeleteRowKey,
+  onDeleteRowKeys,
   onResetCustomizations,
 }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('ITEM_QTY_ONLY');
@@ -61,6 +63,7 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
   const [pageSize, setPageSize] = useState<number>(50);
   const [currentPage, setCurrentPage] = useState<number>(1);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
   const [copyModalData, setCopyModalData] = useState<{ open: boolean; text: string; count: number }>({
     open: false,
@@ -346,6 +349,93 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
       console.error('Failed to copy', err);
       let text = (displayRows as any[]).map((r) => `${r.component}\t${r.totalRequired}`).join('\n');
       setCopyModalData({ open: true, text, count: displayRows.length });
+    }
+  };
+
+  // Helper to extract the unique key for each row according to viewMode & consolidation
+  const getRowKey = (row: any): string => {
+    if (viewMode === 'ITEM_QTY_ONLY' && consolidation === 'CONSOLIDATED') {
+      return row.component;
+    }
+    return row.id || `${row.parent}_${row.component}_${row.level}`;
+  };
+
+  // Keys on current page
+  const pageRowKeys = useMemo(() => {
+    return paginatedRows.map((r: any) => getRowKey(r));
+  }, [paginatedRows, viewMode, consolidation]);
+
+  // Keys in all currently filtered display rows
+  const allVisibleRowKeys = useMemo(() => {
+    return displayRows.map((r: any) => getRowKey(r));
+  }, [displayRows, viewMode, consolidation]);
+
+  const isAllPageSelected = pageRowKeys.length > 0 && pageRowKeys.every((k) => selectedKeys.has(k));
+  const isSomePageSelected = pageRowKeys.some((k) => selectedKeys.has(k));
+
+  const handleToggleRowSelect = (key: string) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const handleTogglePageSelect = () => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (isAllPageSelected) {
+        pageRowKeys.forEach((k) => next.delete(k));
+      } else {
+        pageRowKeys.forEach((k) => next.add(k));
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllVisible = () => {
+    setSelectedKeys(new Set(allVisibleRowKeys));
+  };
+
+  const handleClearSelection = () => {
+    setSelectedKeys(new Set());
+  };
+
+  const handleDeleteSelected = () => {
+    if (selectedKeys.size === 0) return;
+    const keysToDelete = Array.from(selectedKeys);
+    if (onDeleteRowKeys) {
+      onDeleteRowKeys(keysToDelete);
+    } else if (onDeleteRowKey) {
+      keysToDelete.forEach((k) => onDeleteRowKey(k));
+    }
+    setSelectedKeys(new Set());
+  };
+
+  const handleCopySelected = async () => {
+    if (selectedKeys.size === 0) return;
+    const selectedRows = displayRows.filter((r: any) => selectedKeys.has(getRowKey(r)));
+    if (selectedRows.length === 0) return;
+
+    let text = '';
+    if (viewMode === 'ITEM_QTY_ONLY' && consolidation === 'CONSOLIDATED') {
+      text = selectedRows.map((r: any) => `${r.component}\t${r.totalRequired}`).join('\n');
+    } else if (viewMode === 'PARENT_ITEM_LEVEL') {
+      text = (selectedRows as ExplodedRow[]).map((r) => `${r.parent}\t${r.component}\t${r.totalRequired}`).join('\n');
+    } else {
+      text = (selectedRows as ExplodedRow[]).map((r) => `${r.component}\t${r.totalRequired}`).join('\n');
+    }
+
+    const ok = await copyTextToClipboard(text);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } else {
+      setCopyModalData({ open: true, text, count: selectedRows.length });
     }
   };
 
@@ -690,6 +780,66 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
         </div>
       )}
 
+      {/* Active Selection Action Bar */}
+      {selectedKeys.size > 0 && (
+        <div className="bg-indigo-950 text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs shadow-md border-b border-indigo-900 animate-in fade-in slide-in-from-top-1 duration-150 sticky top-0 z-20">
+          <div className="flex items-center space-x-3">
+            <span className="inline-flex items-center justify-center bg-indigo-500 text-white text-[11px] font-bold px-2.5 py-0.5 rounded-full font-mono shadow-xs">
+              {selectedKeys.size} selected
+            </span>
+            <span className="text-indigo-100 font-medium hidden sm:inline">
+              {selectedKeys.size === displayRows.length
+                ? 'All matching items selected'
+                : `Selected ${selectedKeys.size} of ${displayRows.length} items`}
+            </span>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            {/* Copy Selected */}
+            <button
+              type="button"
+              onClick={handleCopySelected}
+              className="inline-flex items-center space-x-1.5 bg-indigo-700 hover:bg-indigo-600 text-white px-3 py-1.5 rounded-lg font-semibold transition text-xs shadow-xs cursor-pointer"
+              title="Copy formatted list of selected rows"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span>Copy Selected ({selectedKeys.size})</span>
+            </button>
+
+            {/* Delete Selected (Bulk Delete) */}
+            <button
+              type="button"
+              onClick={handleDeleteSelected}
+              className="inline-flex items-center space-x-1.5 bg-rose-600 hover:bg-rose-700 text-white px-3.5 py-1.5 rounded-lg font-bold shadow-xs transition text-xs cursor-pointer"
+              title="Delete all selected items"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Selected ({selectedKeys.size})</span>
+            </button>
+
+            {/* Select All on Page / All Visible */}
+            {selectedKeys.size < displayRows.length ? (
+              <button
+                type="button"
+                onClick={handleSelectAllVisible}
+                className="text-indigo-200 hover:text-white px-2.5 py-1.5 text-xs font-semibold underline underline-offset-2 transition cursor-pointer"
+              >
+                Select All ({displayRows.length})
+              </button>
+            ) : null}
+
+            {/* Deselect All */}
+            <button
+              type="button"
+              onClick={handleClearSelection}
+              className="bg-indigo-800/80 hover:bg-indigo-800 text-indigo-200 hover:text-white px-2.5 py-1.5 rounded-lg font-semibold transition text-xs cursor-pointer"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Banner for Custom Line Qty Adjustments & Deletions */}
       {(Object.keys(qtyOverrides).length > 0 || deletedRowKeys.length > 0) && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900 font-medium">
@@ -707,7 +857,7 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
             <button
               type="button"
               onClick={onResetCustomizations}
-              className="inline-flex items-center space-x-1.5 bg-amber-200/70 hover:bg-amber-300 text-amber-950 px-3 py-1 rounded-md text-[11px] font-bold transition shadow-2xs"
+              className="inline-flex items-center space-x-1.5 bg-amber-200/70 hover:bg-amber-300 text-amber-950 px-3 py-1 rounded-md text-[11px] font-bold transition shadow-2xs cursor-pointer"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>Reset All Customizations</span>
@@ -725,6 +875,18 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-amber-600 text-white font-bold tracking-wide border-b border-amber-700 select-none">
+                <th className="w-10 px-3 py-3 text-center">
+                  <input
+                    type="checkbox"
+                    checked={isAllPageSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = isSomePageSelected && !isAllPageSelected;
+                    }}
+                    onChange={handleTogglePageSelect}
+                    className="w-4 h-4 rounded border-amber-300 text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                    title={isAllPageSelected ? 'Deselect all on this page' : 'Select all on this page'}
+                  />
+                </th>
                 <th
                   onClick={() => handleSort('component')}
                   className="px-5 py-3 cursor-pointer hover:bg-amber-700 transition"
@@ -767,7 +929,7 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
             <tbody className="divide-y divide-slate-100 font-mono">
               {paginatedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-10 text-center text-slate-400 font-sans">
+                  <td colSpan={6} className="px-6 py-10 text-center text-slate-400 font-sans">
                     No matching items found for your criteria.
                   </td>
                 </tr>
@@ -777,16 +939,32 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
                   const avail = row.available ?? 0;
                   const raiseQty = row.raiseQty ?? Math.max(0, req - avail);
                   const isFullyInStock = avail >= req;
-                  const rowKey = row.component;
+                  const rowKey = getRowKey(row);
                   const isEdited = row.isEdited || qtyOverrides[rowKey] !== undefined;
+                  const isSelected = selectedKeys.has(rowKey);
 
                   return (
                     <tr
                       key={row.id || row.component + idx}
-                      className={`hover:bg-amber-50/50 transition ${
-                        idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'
+                      className={`transition ${
+                        isSelected
+                          ? 'bg-amber-100/75 ring-1 ring-inset ring-amber-300'
+                          : idx % 2 === 0
+                          ? 'bg-white hover:bg-amber-50/50'
+                          : 'bg-slate-50/60 hover:bg-amber-50/50'
                       }`}
                     >
+                      {/* Checkbox */}
+                      <td className="w-10 px-3 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleRowSelect(rowKey)}
+                          className="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                          title="Select item for bulk actions"
+                        />
+                      </td>
+
                       {/* Item */}
                       <td className="px-5 py-3 text-sm">
                         <div className="flex flex-col gap-1">
@@ -911,6 +1089,7 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
             {displayRows.length > 0 && (
               <tfoot>
                 <tr className="bg-amber-50 font-bold border-t-2 border-amber-300">
+                  <td className="px-3 py-2.5 text-center"></td>
                   <td className="px-5 py-2.5 text-amber-950 font-sans uppercase tracking-wider text-xs">
                     Total ({displayRows.length} {displayRows.length === 1 ? 'row' : 'rows'})
                   </td>
@@ -935,6 +1114,18 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-amber-600 text-white font-bold tracking-wide border-b border-amber-700 select-none">
+                <th className="w-10 px-3 py-3 text-center">
+                  <input
+                    type="checkbox"
+                    checked={isAllPageSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = isSomePageSelected && !isAllPageSelected;
+                    }}
+                    onChange={handleTogglePageSelect}
+                    className="w-4 h-4 rounded border-amber-300 text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                    title={isAllPageSelected ? 'Deselect all on this page' : 'Select all on this page'}
+                  />
+                </th>
                 <th
                   onClick={() => handleSort('parent')}
                   className="px-4 py-3 cursor-pointer hover:bg-amber-700 transition"
@@ -995,7 +1186,7 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
             <tbody className="divide-y divide-slate-100 font-mono">
               {paginatedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-slate-400 font-sans">
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-400 font-sans">
                     No matching exploded rows found for your criteria.
                   </td>
                 </tr>
@@ -1005,16 +1196,32 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
                   const avail = row.available ?? 0;
                   const raiseQty = row.raiseQty ?? Math.max(0, req - avail);
                   const isFullyInStock = avail >= req;
-                  const rowKey = row.id || `${row.parent}_${row.component}_${row.level}`;
+                  const rowKey = getRowKey(row);
                   const isEdited = (row as any).isEdited || qtyOverrides[rowKey] !== undefined;
+                  const isSelected = selectedKeys.has(rowKey);
 
                   return (
                     <tr
                       key={row.id || idx}
-                      className={`hover:bg-amber-50/40 transition ${
-                        idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'
+                      className={`transition ${
+                        isSelected
+                          ? 'bg-amber-100/75 ring-1 ring-inset ring-amber-300'
+                          : idx % 2 === 0
+                          ? 'bg-white hover:bg-amber-50/40'
+                          : 'bg-slate-50/50 hover:bg-amber-50/40'
                       }`}
                     >
+                      {/* Checkbox */}
+                      <td className="w-10 px-3 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleRowSelect(rowKey)}
+                          className="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                          title="Select item for bulk actions"
+                        />
+                      </td>
+
                       {/* Parent */}
                       <td className="px-4 py-2.5 font-bold text-slate-800">
                         {row.parent}
@@ -1137,6 +1344,18 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 select-none">
+                <th className="w-10 px-3 py-3 text-center">
+                  <input
+                    type="checkbox"
+                    checked={isAllPageSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = isSomePageSelected && !isAllPageSelected;
+                    }}
+                    onChange={handleTogglePageSelect}
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                    title={isAllPageSelected ? 'Deselect all on this page' : 'Select all on this page'}
+                  />
+                </th>
                 <th
                   onClick={() => handleSort('parent')}
                   className="px-4 py-3 cursor-pointer hover:bg-slate-100 transition"
@@ -1198,7 +1417,7 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
             <tbody className="divide-y divide-slate-100 font-mono">
               {paginatedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-slate-400 font-sans">
+                  <td colSpan={9} className="px-4 py-8 text-center text-slate-400 font-sans">
                     No matching exploded rows found for your criteria.
                   </td>
                 </tr>
@@ -1208,11 +1427,30 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
                   const avail = row.available ?? 0;
                   const raiseQty = row.raiseQty ?? Math.max(0, req - avail);
                   const isFullyInStock = avail >= req;
-                  const rowKey = row.id || `${row.parent}_${row.component}_${row.level}`;
+                  const rowKey = getRowKey(row);
                   const isEdited = (row as any).isEdited || qtyOverrides[rowKey] !== undefined;
+                  const isSelected = selectedKeys.has(rowKey);
 
                   return (
-                    <tr key={row.id || idx} className="hover:bg-slate-50 transition">
+                    <tr
+                      key={row.id || idx}
+                      className={`transition ${
+                        isSelected
+                          ? 'bg-amber-100/75 ring-1 ring-inset ring-amber-300'
+                          : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      {/* Checkbox */}
+                      <td className="w-10 px-3 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleRowSelect(rowKey)}
+                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                          title="Select item for bulk actions"
+                        />
+                      </td>
+
                       <td className="px-4 py-2.5 font-bold text-indigo-600">
                         {row.parent}
                       </td>
