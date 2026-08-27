@@ -1,0 +1,6 @@
+{
+  "name": "SUB BOM Explosion & Material Planning",
+  "description": "Multi-level Bill of Materials (BOM) explosion, Power Query replication engine, and Material Requirements Planning (MRP) with real-time shortage tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
