@@ -275,38 +275,47 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
 
   // Copy 2-column Item & Qty to clipboard for direct Excel pasting
   const copyTextToClipboard = async (text: string): Promise<boolean> => {
-    // Attempt 1: Synchronous execCommand (works best during click gesture context)
-    try {
-      const textArea = document.createElement('textarea');
-      textArea.value = text;
-      textArea.style.position = 'fixed';
-      textArea.style.top = '0';
-      textArea.style.left = '0';
-      textArea.style.width = '2em';
-      textArea.style.height = '2em';
-      textArea.style.padding = '0';
-      textArea.style.border = 'none';
-      textArea.style.outline = 'none';
-      textArea.style.opacity = '0.01';
-      document.body.appendChild(textArea);
-      textArea.focus();
-      textArea.select();
-      textArea.setSelectionRange(0, 999999);
-      const syncOk = document.execCommand('copy');
-      document.body.removeChild(textArea);
-      if (syncOk) return true;
-    } catch (e) {
-      // continue to async clipboard
-    }
+    if (!text) return false;
 
-    // Attempt 2: Navigator Clipboard API
-    if (navigator.clipboard && window.isSecureContext) {
+    // Attempt 1: Modern Navigator Clipboard API (Primary)
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
       try {
         await navigator.clipboard.writeText(text);
         return true;
       } catch (err) {
-        console.warn('navigator.clipboard.writeText failed:', err);
+        console.warn('navigator.clipboard.writeText failed, attempting execCommand fallback:', err);
       }
+    }
+
+    // Attempt 2: Synchronous execCommand fallback with viewport-attached focus
+    try {
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      // Prevent scrolling or shifting layout
+      textArea.style.position = 'fixed';
+      textArea.style.top = '0';
+      textArea.style.left = '0';
+      textArea.style.width = '2px';
+      textArea.style.height = '2px';
+      textArea.style.padding = '0';
+      textArea.style.border = 'none';
+      textArea.style.outline = 'none';
+      textArea.style.boxShadow = 'none';
+      textArea.style.background = 'transparent';
+      textArea.style.opacity = '0.01';
+      
+      document.body.appendChild(textArea);
+      
+      window.focus();
+      textArea.focus();
+      textArea.select();
+      textArea.setSelectionRange(0, textArea.value.length);
+      
+      const syncOk = document.execCommand('copy');
+      document.body.removeChild(textArea);
+      if (syncOk) return true;
+    } catch (e) {
+      console.warn('execCommand fallback failed:', e);
     }
 
     return false;
@@ -1382,24 +1391,42 @@ export const ParentBreakdownTable: React.FC<ParentBreakdownTableProps> = ({
 
               <textarea
                 readOnly
+                autoFocus
                 value={copyModalData.text}
+                onFocus={(e) => e.target.select()}
                 onClick={(e) => (e.target as HTMLTextAreaElement).select()}
-                className="w-full h-56 p-3 text-xs font-mono bg-slate-900 text-slate-100 rounded-lg border border-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none"
+                className="w-full h-56 p-3 text-xs font-mono bg-slate-900 text-slate-100 rounded-lg border border-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none cursor-pointer"
               />
 
               <div className="flex items-center justify-between pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    copyTextToClipboard(copyModalData.text);
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 2000);
-                  }}
-                  className="inline-flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow-xs transition"
-                >
-                  <Copy className="w-4 h-4" />
-                  <span>{copied ? 'Copied to Clipboard!' : 'Copy Text Now'}</span>
-                </button>
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const ok = await copyTextToClipboard(copyModalData.text);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }}
+                    className="inline-flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow-xs transition"
+                  >
+                    <Copy className="w-4 h-4" />
+                    <span>{copied ? 'Copied to Clipboard!' : 'Copy Text Now'}</span>
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      const container = (e.currentTarget.parentElement?.parentElement?.previousElementSibling as HTMLTextAreaElement);
+                      if (container) {
+                        container.focus();
+                        container.select();
+                      }
+                    }}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-lg text-xs font-semibold transition"
+                  >
+                    Select All
+                  </button>
+                </div>
 
                 <button
                   type="button"
