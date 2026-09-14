@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
-import { BOMRawRecord, BuildScheduleRecord, InventoryItem, FileParseResult } from '../types/bom';
+import { BOMRawRecord, BuildScheduleRecord, InventoryItem, FileParseResult, ColumnMappingConfig } from '../types/bom';
 
 /**
  * Normalizes text headers for fuzzy matching
@@ -143,7 +143,11 @@ export function mapToBOMSource(rawRows: any[], fileName: string): FileParseResul
 /**
  * Maps raw rows into BuildScheduleRecord array
  */
-export function mapToBuildSchedule(rawRows: any[], fileName: string): FileParseResult<BuildScheduleRecord> {
+export function mapToBuildSchedule(
+  rawRows: any[],
+  fileName: string,
+  columnMapping?: ColumnMappingConfig
+): FileParseResult<BuildScheduleRecord> {
   const result: BuildScheduleRecord[] = [];
   const errors: string[] = [];
 
@@ -158,21 +162,170 @@ export function mapToBuildSchedule(rawRows: any[], fileName: string): FileParseR
     return rawHeaders.find((h) => cleanCandidates.includes(cleanKey(h)));
   };
 
-  const colParent =
-    findCol(['product', 'productname', 'parent', 'parentassembly', 'assembly', 'level1', 'part', 'partnumber', 'toplevel', 'item', 'sku']) ||
-    (rawHeaders.length >= 2 && cleanKey(rawHeaders[0]).includes('location') ? rawHeaders[1] : undefined) ||
-    (rawHeaders.length >= 1 ? rawHeaders[0] : undefined);
+  // 1. Parent / SKU / Assembly column detection
+  const parentCandidates = [
+    'sku',
+    'item',
+    'itemnumber',
+    'itemno',
+    'parent',
+    'parentassembly',
+    'parentpart',
+    'assembly',
+    'product',
+    'productname',
+    'productcode',
+    'part',
+    'partnumber',
+    'partno',
+    'code',
+    'level1',
+    'toplevel',
+    'model',
+  ];
 
-  const colWorkOrder =
-    findCol(['sumofinternalid', 'internalid', 'internal_id', 'id', 'workorder', 'wo', 'order', 'ordernumber', 'batch', 'batchid', 'job', 'jobnumber']) ||
-    (rawHeaders.length >= 3 && cleanKey(rawHeaders[0]).includes('location') ? rawHeaders[2] : undefined);
+  let colParent: string | undefined = columnMapping?.parentCol;
+  if (!colParent) {
+    // Check if any candidate matches headers
+    colParent = findCol(parentCandidates);
 
-  const colBuildQty =
-    findCol(['sumofunitstoproduce', 'unitstoproduce', 'unitsproduce', 'units', 'buildqty', 'buildquantity', 'qty', 'quantity', 'ordersize', 'plannedqty', 'demand', 'build']) ||
-    (rawHeaders.length >= 4 && cleanKey(rawHeaders[0]).includes('location') ? rawHeaders[3] : undefined);
+    // If Column B exists (index 1) and Column A is metadata (Urgency, Status, Priority, Location, Index, Line, etc.)
+    if (!colParent && rawHeaders.length >= 2) {
+      const colAKey = cleanKey(rawHeaders[0]);
+      if (['urgency', 'status', 'priority', 'location', 'index', 'id', 'line', 'seq'].includes(colAKey)) {
+        colParent = rawHeaders[1];
+      }
+    }
 
-  const colDueDate = findCol(['duedate', 'date', 'targetdate', 'completiondate', 'schedule']);
-  const colNotes = findCol(['notes', 'comment', 'description', 'remarks']);
+    // Default positional fallbacks
+    if (!colParent) {
+      if (rawHeaders.length >= 2 && cleanKey(rawHeaders[0]).includes('location')) {
+        colParent = rawHeaders[1];
+      } else if (rawHeaders.length >= 2) {
+        colParent = rawHeaders[1]; // Column B as default for ERP reports
+      } else if (rawHeaders.length >= 1) {
+        colParent = rawHeaders[0];
+      }
+    }
+  }
+
+  // 2. Build Qty / Demand / Back Order column detection
+  const qtyCandidates = [
+    // Back Order variations (from NetSuite / ERP back order reports)
+    'backorder',
+    'backorde',
+    'backorders',
+    'backordered',
+    'backorderqty',
+    'backorderquantity',
+    'backord',
+    'boqty',
+    'bo',
+    'b/o',
+    'b/oqty',
+    'orderqty',
+    'orderquantity',
+    'orderedqty',
+    'openqty',
+    'openquantity',
+    'sumofunitstoproduce',
+    'unitstoproduce',
+    'unitsproduce',
+    'buildqty',
+    'buildquantity',
+    'qty',
+    'quantity',
+    'ordersize',
+    'plannedqty',
+    'demand',
+    'demandqty',
+    'tobuild',
+    'unitstobuild',
+    'quantitytobuild',
+    'requiredqty',
+    'requireqty',
+    'needqty',
+    'soqty',
+    'salesorderqty',
+    'netqty',
+    'build',
+    'units',
+  ];
+
+  let colBuildQty: string | undefined = columnMapping?.qtyCol;
+  if (!colBuildQty) {
+    colBuildQty = findCol(qtyCandidates);
+
+    // If Column F exists (index 5) in a 6+ column spreadsheet:
+    // Check if Column F is numeric or has back order context
+    if (!colBuildQty && rawHeaders.length >= 6) {
+      const colF = rawHeaders[5];
+      const hasNumeric = rawRows.some((r) => {
+        const val = r[colF];
+        return val !== '' && val !== null && val !== undefined && !isNaN(Number(val));
+      });
+      if (hasNumeric) {
+        colBuildQty = colF;
+      }
+    }
+
+    // 4-column summary fallback
+    if (!colBuildQty && rawHeaders.length >= 4 && cleanKey(rawHeaders[0]).includes('location')) {
+      colBuildQty = rawHeaders[3];
+    }
+  }
+
+  // 3. Work Order / Sales Order / Document Number detection
+  const woCandidates = [
+    'documentnumber',
+    'documentno',
+    'docnumber',
+    'docno',
+    'document',
+    'salesorder',
+    'salesorderno',
+    'sono',
+    'so',
+    'workorder',
+    'wo',
+    'workorderno',
+    'sumofinternalid',
+    'internalid',
+    'internal_id',
+    'id',
+    'order',
+    'ordernumber',
+    'orderno',
+    'batch',
+    'batchid',
+    'job',
+    'jobnumber',
+  ];
+  const colWorkOrder = columnMapping?.workOrderCol || findCol(woCandidates) || (rawHeaders.length >= 3 && cleanKey(rawHeaders[0]).includes('location') ? rawHeaders[2] : undefined);
+  const colDocNumber = findCol(['documentnumber', 'documentno', 'docnumber', 'docno', 'salesorder', 'sono']);
+
+  // 4. Due Date / Required Date detection
+  const dueDateCandidates = [
+    'requireddate',
+    'requiredd',
+    'needdate',
+    'duedate',
+    'due_date',
+    'date',
+    'targetdate',
+    'completiondate',
+    'schedule',
+    'deliverydate',
+  ];
+  const colDueDate = columnMapping?.dueDateCol || findCol(dueDateCandidates);
+
+  // 5. Context / Notes columns
+  const colUrgency = findCol(['urgency', 'priority']);
+  const colCustomer = findCol(['customer', 'customername', 'client', 'account']);
+  const colItemType = findCol(['itemtype', 'type', 'parttype']);
+  const colLocation = findCol(['location', 'site', 'warehouse']);
+  const colBrand = findCol(['brand', 'manufacturer']);
+  const colGeneralNotes = findCol(['notes', 'comment', 'description', 'remarks']);
 
   for (let i = 0; i < rawRows.length; i++) {
     const row = rawRows[i];
@@ -181,15 +334,37 @@ export function mapToBuildSchedule(rawRows: any[], fileName: string): FileParseR
 
     if (!parentVal) continue;
 
+    // Prefer specific Document Number if Work Order is "No Work Order" or empty
+    let woVal = colWorkOrder ? String(row[colWorkOrder] ?? '').trim() : '';
+    const docVal = colDocNumber ? String(row[colDocNumber] ?? '').trim() : '';
+    if (!woVal || woVal.toLowerCase().includes('no work') || woVal.toLowerCase() === 'no work order') {
+      if (docVal) woVal = docVal;
+    }
+
+    // Build context notes
+    const notePieces: string[] = [];
+    if (colUrgency && row[colUrgency]) notePieces.push(`Urgency: ${row[colUrgency]}`);
+    if (docVal && woVal !== docVal) notePieces.push(`SO: ${docVal}`);
+    if (colCustomer && row[colCustomer]) notePieces.push(`Customer: ${row[colCustomer]}`);
+    if (colItemType && row[colItemType]) notePieces.push(`Type: ${row[colItemType]}`);
+    if (colLocation && row[colLocation]) notePieces.push(`Loc: ${row[colLocation]}`);
+    if (colBrand && row[colBrand]) notePieces.push(`Brand: ${row[colBrand]}`);
+    if (colGeneralNotes && row[colGeneralNotes]) notePieces.push(String(row[colGeneralNotes]));
+
     result.push({
       id: `build-imp-${i + 1}`,
       parent: parentVal,
       buildQty: isNaN(buildQtyVal) ? 1 : buildQtyVal,
-      workOrder: colWorkOrder ? String(row[colWorkOrder] ?? '') : undefined,
-      dueDate: colDueDate ? String(row[colDueDate] ?? '') : undefined,
-      notes: colNotes ? String(row[colNotes] ?? '') : undefined,
+      workOrder: woVal || undefined,
+      dueDate: colDueDate && row[colDueDate] ? String(row[colDueDate]).trim() : undefined,
+      notes: notePieces.length > 0 ? notePieces.join(' | ') : undefined,
     });
   }
+
+  // Summary of detected mapping for UI display
+  const colSummary = colParent && colBuildQty
+    ? `Item: "${colParent}" · Qty: "${colBuildQty}"`
+    : 'Default column mapping applied';
 
   return {
     data: result,
@@ -197,6 +372,14 @@ export function mapToBuildSchedule(rawRows: any[], fileName: string): FileParseR
     headers: rawHeaders,
     totalRows: result.length,
     errors,
+    detectedColumns: {
+      parentCol: colParent,
+      qtyCol: colBuildQty,
+      workOrderCol: colWorkOrder,
+      dueDateCol: colDueDate,
+      summary: colSummary,
+    },
+    rawRows,
   };
 }
 

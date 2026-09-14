@@ -127,10 +127,25 @@ export interface ExplosionResult {
   circularReferences: string[];
 }
 
+export interface ColumnMappingConfig {
+  parentCol?: string;
+  qtyCol?: string;
+  workOrderCol?: string;
+  dueDateCol?: string;
+}
+
 export interface FileParseResult<T> {
   data: T[];
   fileName: string;
   headers: string[];
   totalRows: number;
   errors?: string[];
+  detectedColumns?: {
+    parentCol?: string;
+    qtyCol?: string;
+    workOrderCol?: string;
+    dueDateCol?: string;
+    summary?: string;
+  };
+  rawRows?: any[];
 }

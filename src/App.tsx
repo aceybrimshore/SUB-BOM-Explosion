@@ -22,6 +22,7 @@ import {
   BuildScheduleRecord,
   InventoryItem,
   ExplosionResult,
+  ColumnMappingConfig,
 } from './types/bom';
 
 import { runBOMExplosion } from './utils/bomEngine';
@@ -48,6 +49,7 @@ import { HierarchicalTreeView } from './components/HierarchicalTreeView';
 import { BOMSourceInspector } from './components/BOMSourceInspector';
 import { SubassembliesToMakeView } from './components/SubassembliesToMakeView';
 import { ExcelPasteModal } from './components/ExcelPasteModal';
+import { ColumnMappingModal } from './components/ColumnMappingModal';
 
 export default function App() {
   // Load persisted state if available
@@ -59,6 +61,14 @@ export default function App() {
   const [isAutoExplode, setIsAutoExplode] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<'breakdown' | 'subs' | 'tree' | 'bomSource'>('breakdown');
   const [showPasteModal, setShowPasteModal] = useState<boolean>(false);
+  const [showColumnMappingModal, setShowColumnMappingModal] = useState<boolean>(false);
+  const [scheduleRawData, setScheduleRawData] = useState<{
+    rows: any[];
+    headers: string[];
+    fileName: string;
+    detectedMapping?: ColumnMappingConfig;
+    mappingSummary?: string;
+  } | null>(null);
 
   // State: Raw Data (Restored from browser auto-save OR initial sample data)
   const [bomSource, setBomSource] = useState<BOMRawRecord[]>(initialPersisted?.bomSource || SAMPLE_POWER_QUERY_BOM);
@@ -194,13 +204,35 @@ export default function App() {
       if (mapped.data.length > 0) {
         setBuildSchedule(mapped.data);
         setScheduleFileName(file.name);
-        notify(`✓ Loaded ${mapped.data.length} build schedule rows from "${file.name}"`);
+        setScheduleRawData({
+          rows: parsed.rows,
+          headers: parsed.headers,
+          fileName: file.name,
+          detectedMapping: {
+            parentCol: mapped.detectedColumns?.parentCol,
+            qtyCol: mapped.detectedColumns?.qtyCol,
+            workOrderCol: mapped.detectedColumns?.workOrderCol,
+            dueDateCol: mapped.detectedColumns?.dueDateCol,
+          },
+          mappingSummary: mapped.detectedColumns?.summary,
+        });
+        const colInfo = mapped.detectedColumns?.summary ? ` (${mapped.detectedColumns.summary})` : '';
+        notify(`✓ Loaded ${mapped.data.length} build schedule rows from "${file.name}"${colInfo}`);
       } else {
         notify(`⚠️ Could not parse build schedule from "${file.name}".`);
       }
     } catch (err: any) {
       notify(`❌ Error reading schedule: ${err.message}`);
     }
+  };
+
+  const handleApplyColumnMapping = (records: BuildScheduleRecord[], mapping: ColumnMappingConfig) => {
+    setBuildSchedule(records);
+    if (scheduleRawData) {
+      const summary = mapping.parentCol && mapping.qtyCol ? `Item: "${mapping.parentCol}" · Qty: "${mapping.qtyCol}"` : 'Custom Column Mapping';
+      setScheduleRawData((prev) => prev ? { ...prev, detectedMapping: mapping, mappingSummary: summary } : null);
+    }
+    notify(`✓ Updated build schedule with ${records.length} items using mapped columns.`);
   };
 
   const handleUploadInventory = async (file: File) => {
@@ -342,6 +374,9 @@ export default function App() {
           onChangeDefaultBuildQty={setDefaultBuildQty}
           onResetToDemo={() => handleLoadSample('powerquery')}
           onOpenPasteModal={() => setShowPasteModal(true)}
+          onOpenColumnMappingModal={() => setShowColumnMappingModal(true)}
+          hasScheduleRawData={!!scheduleRawData}
+          detectedMappingSummary={scheduleRawData?.mappingSummary}
         />
 
         {/* Executive Metrics Bar */}
@@ -488,6 +523,19 @@ export default function App() {
         bomSource={bomSource}
         onApplySchedule={handleApplyPastedSchedule}
       />
+
+      {/* Column Mapping Modal */}
+      {scheduleRawData && (
+        <ColumnMappingModal
+          isOpen={showColumnMappingModal}
+          onClose={() => setShowColumnMappingModal(false)}
+          rawRows={scheduleRawData.rows}
+          fileName={scheduleRawData.fileName}
+          headers={scheduleRawData.headers}
+          initialMapping={scheduleRawData.detectedMapping}
+          onApplyMapping={handleApplyColumnMapping}
+        />
+      )}
 
       {/* Footer with Business Logic Reference */}
       <footer className="bg-white border-t border-slate-200 mt-12 py-5 text-slate-500 text-xs">

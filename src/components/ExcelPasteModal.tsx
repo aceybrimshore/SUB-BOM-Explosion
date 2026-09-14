@@ -49,7 +49,30 @@ export const ExcelPasteModal: React.FC<ExcelPasteModalProps> = ({
       originalLine: string;
     }> = [];
 
-    const headerKeywords = ['location', 'product', 'parent', 'sku', 'assembly', 'level 1', 'level1', 'build qty', 'qty', 'quantity', 'build_qty', 'internal id', 'unitstoproduce', 'sum of'];
+    const headerKeywords = [
+      'location',
+      'product',
+      'parent',
+      'sku',
+      'assembly',
+      'level 1',
+      'level1',
+      'build qty',
+      'qty',
+      'quantity',
+      'build_qty',
+      'internal id',
+      'unitstoproduce',
+      'sum of',
+      'urgency',
+      'document number',
+      'back order',
+      'back orde',
+      'customer',
+      'item type',
+      'work order',
+      'order value',
+    ];
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -73,7 +96,49 @@ export const ExcelPasteModal: React.FC<ExcelPasteModalProps> = ({
       let qty = 1;
       let wo = '';
 
-      if (parts.length >= 4) {
+      // Check for 6+ Column ERP / NetSuite Back Order Report (Col B: SKU, Col F: Back Order)
+      if (parts.length >= 6) {
+        const numColF = parseFloat(parts[5].replace(/,/g, ''));
+        const numCol4 = parseFloat(parts[3].replace(/,/g, ''));
+
+        // Case A: 6+ cols where Column F (index 5) is numeric -> Column B (index 1) is Item / SKU
+        if (!isNaN(numColF) && parts[1]) {
+          parent = parts[1];
+          qty = numColF;
+          // Column C is Document Number (e.g. SO0599312) or Col H is Work Order
+          const woPart = parts[7] && !parts[7].toLowerCase().includes('no work') ? parts[7] : parts[2];
+          wo = woPart || `SO-${i + 1}`;
+        }
+        // Case B: 4th col (UnitsToProduce) is numeric with Col A = Location, Col B = Product
+        else if (!isNaN(numCol4)) {
+          parent = parts[1];
+          wo = parts[2];
+          qty = numCol4;
+        } else {
+          parent = parts[0];
+          const num2 = parseFloat(parts[1].replace(/,/g, ''));
+          const num3 = parseFloat(parts[2].replace(/,/g, ''));
+          if (!isNaN(num3)) {
+            qty = num3;
+            wo = parts[1];
+          } else if (!isNaN(num2)) {
+            qty = num2;
+            wo = parts[2];
+          }
+        }
+      } else if (parts.length === 5) {
+        const numCol4 = parseFloat(parts[4].replace(/,/g, ''));
+        if (!isNaN(numCol4) && parts[0]) {
+          // Copied starting from Col B (SKU) to Col F (Back Order)
+          parent = parts[0];
+          qty = numCol4;
+          wo = parts[1];
+        } else {
+          parent = parts[0];
+          const num2 = parseFloat(parts[1].replace(/,/g, ''));
+          if (!isNaN(num2)) qty = num2;
+        }
+      } else if (parts.length === 4) {
         const num3 = parseFloat(parts[2].replace(/,/g, ''));
         const num4 = parseFloat(parts[3].replace(/,/g, ''));
 
@@ -223,6 +288,18 @@ Sydney	VN1WZ9955106F	171533	32	0	0`;
     setRawText(fullReportSample);
   };
 
+  const handleLoadBackOrderSample = () => {
+    const backOrderSample = `Urgency	SKU	Document Number	Customer	Item Type	Back Order	Required Date	Work Order	Order Value	Location	Customer	Brand
+MEDIUM	CSL26M	SO0599312	318587	Assembly	1	14/09/2026	No Work Order	342.92	Sydney	MINECORI	Rhino-Rack
+MEDIUM	CSL35M	SO0599613	318998	Assembly	3	14/09/2026	No Work Order	1107.99	Sydney	MINECORI	Rhino-Rack
+MEDIUM	LR1020	SO0599613	318998	Assembly	2	14/09/2026	No Work Order	104.64	Sydney	MINECORI	Rhino-Rack
+MEDIUM	RLKS2	SO0600010	263664	Assembly	4	14/09/2026	No Work Order	53.88	Sydney	UV 4X4 PT	Rhino-Rack
+MEDIUM	RLRM	SO0600031	18604	Assembly	1	14/09/2026	No Work Order	68.84	Sydney	THE JENNI	Rhino-Rack
+MEDIUM	VN1WZ9955106F	SO0600042	FO23779	Assembly	8	14/09/2026	No Work Order	1124.24	Sydney	FORD MOT	Rhino-Rack
+MEDIUM	RK106-2	SO0600060	94890	Assembly	1	14/09/2026	No Work Order	13.12	Sydney	TRURACKS	Rhino-Rack`;
+    setRawText(backOrderSample);
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -259,14 +336,22 @@ Sydney	VN1WZ9955106F	171533	32	0	0`;
             <span className="text-xs font-semibold text-slate-700">
               Clipboard Paste Area (Tab, Comma, or CSV Format):
             </span>
-            <div className="flex items-center space-x-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleLoadBackOrderSample}
+                className="inline-flex items-center space-x-1 text-xs text-blue-700 hover:text-blue-900 font-semibold bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-md border border-blue-200 transition"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                <span>Col B: Item & Col F: Qty CSV</span>
+              </button>
               <button
                 type="button"
                 onClick={handleLoadFullReportSample}
                 className="inline-flex items-center space-x-1 text-xs text-emerald-700 hover:text-emerald-900 font-semibold bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-md border border-emerald-200 transition"
               >
                 <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Load CSV Report Sample (Cols A-D+)</span>
+                <span>Report Sample (Cols A-D)</span>
               </button>
               <button
                 type="button"
@@ -300,7 +385,7 @@ Sydney	VN1WZ9955106F	171533	32	0	0`;
           <textarea
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
-            placeholder={`Supported Formats:\n1) Parent Assembly [tab] Build Qty\n   2HJ-071-126\t31\n\n2) Parent Assembly [tab] Internal ID [tab] Build Qty\n   710-RSL-00005\t149525\t3\n   CADDY04\t18155\t20`}
+            placeholder={`Supported Formats:\n1) Back Order CSV / NetSuite (Col B: Item/SKU, Col F: Back Order Qty)\n   MEDIUM\tCSL26M\tSO0599312\t318587\tAssembly\t1\t14/09/2026\t...\n\n2) Parent Assembly [tab] Build Qty\n   CSL26M\t25\n\n3) Location [tab] Product [tab] Internal ID [tab] UnitsToProduce\n   Sydney\t710-RSL-00005\t149525\t3`}
             rows={7}
             className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3.5 font-mono text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition"
           />

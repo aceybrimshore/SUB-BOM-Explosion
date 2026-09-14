@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Upload, FileCheck, Play, Layers, Calendar, Package, Info, RefreshCw, Sliders, ClipboardPaste } from 'lucide-react';
+import { Upload, FileCheck, Play, Layers, Calendar, Package, Info, RefreshCw, Sliders, ClipboardPaste, Columns } from 'lucide-react';
 import { BOMRawRecord, BuildScheduleRecord, InventoryItem } from '../types/bom';
 
 interface UploadSectionProps {
@@ -19,6 +19,9 @@ interface UploadSectionProps {
   onChangeDefaultBuildQty: (val: number) => void;
   onResetToDemo: () => void;
   onOpenPasteModal?: () => void;
+  onOpenColumnMappingModal?: () => void;
+  hasScheduleRawData?: boolean;
+  detectedMappingSummary?: string;
 }
 
 export const UploadSection: React.FC<UploadSectionProps> = ({
@@ -38,6 +41,9 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
   onChangeDefaultBuildQty,
   onResetToDemo,
   onOpenPasteModal,
+  onOpenColumnMappingModal,
+  hasScheduleRawData = false,
+  detectedMappingSummary,
 }) => {
   const bomInputRef = useRef<HTMLInputElement>(null);
   const scheduleInputRef = useRef<HTMLInputElement>(null);
@@ -181,12 +187,17 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
                 {buildSchedule.length} parents
               </span>
             </div>
-            <p className="text-xs text-slate-500 mb-3">
-              Parent Assembly & Planned Build Quantities (joined by BOM Level 1).
+            <p className="text-xs text-slate-500 mb-2">
+              Parent Assemblies & Quantities (auto-detects NetSuite Back Order CSVs where <strong>Col B is SKU</strong> &amp; <strong>Col F is Qty</strong>, plus standard schedules).
             </p>
+            {detectedMappingSummary && (
+              <div className="mb-2 text-[11px] text-blue-700 bg-blue-50/80 px-2 py-1 rounded border border-blue-100 font-mono truncate" title={detectedMappingSummary}>
+                Mapped: {detectedMappingSummary}
+              </div>
+            )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <input
               ref={scheduleInputRef}
               type="file"
@@ -200,7 +211,7 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
               id="btn-upload-build-schedule"
               type="button"
               onClick={() => scheduleInputRef.current?.click()}
-              className="flex-1 inline-flex items-center justify-center space-x-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 py-2 rounded-lg text-xs font-semibold shadow-2xs transition hover:text-emerald-600"
+              className="flex-1 inline-flex items-center justify-center space-x-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-3 py-2 rounded-lg text-xs font-semibold shadow-2xs transition hover:text-emerald-600 min-w-[100px]"
             >
               <Upload className="w-3.5 h-3.5" />
               <span>Upload File</span>
@@ -214,6 +225,17 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
               >
                 <ClipboardPaste className="w-3.5 h-3.5" />
                 <span>Paste</span>
+              </button>
+            )}
+            {onOpenColumnMappingModal && hasScheduleRawData && (
+              <button
+                type="button"
+                onClick={onOpenColumnMappingModal}
+                className="inline-flex items-center justify-center space-x-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-2.5 py-2 rounded-lg text-xs font-semibold transition"
+                title="Configure or adjust column mappings for this file"
+              >
+                <Columns className="w-3.5 h-3.5" />
+                <span>Columns</span>
               </button>
             )}
             {scheduleFileName && !onOpenPasteModal && (
